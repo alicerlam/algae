@@ -6,8 +6,8 @@ data_table = table('Size',[0 5],'VariableTypes',{'string','double','double', 'do
 data_table.Properties.VariableNames = ["Filename", "Center (x)", "Center (y)", "Radius (nm)", "Condition"];
 metadata = table('Size',[0 4],'VariableTypes',{'string','double','double', 'double'});
 metadata.Properties.VariableNames = ["Filename", "Masked center (x)", "Masked center (y)", "Masked radius (nm)"];
-
 output_file = input("Please enter a path to save to.");
+mode = "TEM"; % Replace "SEM" with "TEM" if analyzing TEM images.
 %%
 for i = 1:length(listOfFileNames)
     img = imread(listOfFileNames{i});
@@ -49,9 +49,7 @@ for i = 1:length(listOfFileNames)
             disp(lineLength)
             
             % Read measurement above scalebar
-            rectangleRoi = drawrectangle ;
-            pos = round(rectangleRoi.Position) ;
-            unit = ocr(imgcropped, pos, CharacterSet= "1234567890" ) ;  
+            unit = ocr(imgcropped,  CharacterSet= "1234567890" ) ;  
             recognizedText = unit.Words ;
             
             % Calculate Pixel Size
@@ -80,87 +78,128 @@ for i = 1:length(listOfFileNames)
     else
         label = listOfFileNames{i};
     end
-
-    if (i == 1)
-        preset = input("Enter a previous circle radius (in nm), or enter 0 to draw a new circle.");
-        if preset == 0
-            p = drawcircle();
-            center = p.Center;
-            radius = p.Radius;
-            radius_nm = radius * pixelSize;
+    if (mode == "SEM")
+        if (i == 1)
+            preset = input("Enter a previous circle radius (in nm), or enter 0 to draw a new circle.");
+            if preset == 0
+                p = drawcircle();
+                center = p.Center;
+                radius = p.Radius;
+                radius_nm = radius * pixelSize;
+            else
+                radius_nm = preset;
+                point = drawpoint();
+                p = drawcircle('Center', point.Position,'Radius', radius_nm / pixelSize);
+                center = p.Position;
+                radius = p.Radius;
+            end
         else
-            radius_nm = preset;
             point = drawpoint();
             p = drawcircle('Center', point.Position,'Radius', radius_nm / pixelSize);
             center = p.Position;
             radius = p.Radius;
         end
-    else
-        point = drawpoint();
-        p = drawcircle('Center', point.Position,'Radius', radius_nm / pixelSize);
-        center = p.Position;
-        radius = p.Radius;
+    
+        theta = linspace(0,2*pi,200); 
+        x = center(1) + radius*cos(theta);
+        y = center(2) + radius*sin(theta);
+        bw = createMask(p);
+        mask = img;
+        mask(~bw) = 0;
+    
+        % % Automated Circle Finding -- does not work well :(
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % [centers, radii] = imfindcircles(img,[floor(100/pixelSize) floor(250/pixelSize)],'ObjectPolarity', ...
+        %     'bright','Sensitivity',0.94,'Method','twostage','EdgeThreshold',0.1);
+        % % [centersDark, radiiDark] = imfindcircles(img,[floor(100/pixelSize) floor(250/pixelSize)],'ObjectPolarity', ...
+        % %     'bright','Sensitivity',0.94,'Method','twostage','EdgeThreshold',0.1);
+        % % centers = [centers; centersDark];
+        % % radii = [radii; radiiDark];
+        % insideROI = inpolygon(centers(:,1), centers(:,2), x, y);
+        % centers(~insideROI, :) = [];
+        % radii(~insideROI, :) = [];
+        % subplot(1, 2, 2);
+        % imshow(mask);
+        % h = viscircles(centers, radii);
+        % 
+        % export = array2table([repmat(listOfFileNames{i}, size(centers, 1), 1) centers(:, 1) centers(:, 2) radii .* pixelSize repmat(label, size(centers, 1), 1)]);
+        % export.Properties.VariableNames = ["Filename", "Center (x)", "Center (y)", "Radius (nm)", "Condition"];
+        % data_table = [data_table; export];
+        
+        m_export = array2table([string(listOfFileNames{i}) center(1) center(2) radius * pixelSize]);
+        m_export.Properties.VariableNames = ["Filename", "Masked center (x)", "Masked center (y)", "Masked radius (nm)"];
+        metadata = [metadata; m_export];
+        
+        % Circle Drawing (Aaron)
+        centerX = [] ;
+        centerY = [] ;
+        radius = [] ;
+        while true
+            try
+            roi = drawcircle();
+            cx = roi.Center(1) ;
+            cy = roi.Center(2) ;
+            centerX = [centerX; cx] ;
+            centerY = [centerY; cy] ;
+            r = roi.Radius ;
+            radius = [radius; r] ;
+            catch
+                break
+            end
+        end
+        
+        % Table
+        circle_data = table(centerX, centerY, radius .* pixelSize) ;
+        circle_data.Properties.VariableNames = ["Center (x)", "Center (y)", "Radius (nm)"];
+        Filename = repmat(listOfFileNames{i}, size(circle_data, 1), 1);
+        Condition = repmat(label, size(circle_data, 1), 1);
+        circle_data = addvars(circle_data, Filename, 'Before',"Center (x)");
+        circle_data = addvars(circle_data, Condition, 'After',"Radius (nm)");
+        data_table = [data_table; circle_data];
+        writetable(data_table, output_file);
+        splitpath = split(output_file,"/");
+        splitpath(end) = strcat("metadata_", splitpath(end));
+        metadata_path = join(splitpath,"/");
+        writetable(metadata,metadata_path);
+    elseif (mode == "TEM")
+        disp("Press any key when you are finished drawing.")
+        % Outline of Cell
+        h = drawfreehand('Color','cyan', 'LineWidth', 10); % Makes a freehand shape object named "h"
+        posofH = h.Position; % Gets the position of h; you will likely want the area of h
+        set(gcf,'WindowKeyPressFcn', @(~,~) set(gcf,'UserData', true)); 
+        waitfor(gcf,'UserData') % Waits for user to hit a key before finalizing the shape
+        % Cell Area
+        bwCell = createMask(h);
+        area = bwarea(bwCell);
+        cell_area = area * pixelSize;
+        h.Visible = "on";
+        % Granule Area
+        SugarArea = [];
+        while true
+            try
+            sugarOutline = drawfreehand('Color','green', 'LineWidth', 5); % Makes a freehand shape object named "h"
+            bwSugar = createMask(sugarOutline);
+            starch_area = bwarea(bwSugar);
+            starch_area = starch_area * pixelSize;
+            SugarArea = [SugarArea; starch_area];
+            catch
+                 break
+            end
+        end
+        Filename = repmat(listOfFileNames{i}, size(SugarArea, 1), 1);
+        Condition = repmat(label, size(SugarArea, 1), 1);
+        sugar_table = table(Filename, SugarArea, Condition);
+        splitpath = split(output_file,"/");
+        splitpath(end) = strcat("raw_sugars", splitpath(end));
+        sugars_path = join(splitpath,"/");
+        writetable(sugar_table,sugars_path);
+        summary_table = table(convertCharsToStrings(listOfFileNames{i}), sum(SugarArea), cell_area, (sum(SugarArea)/cell_area) * 100, label);
+        summary_table.Properties.VariableNames = ["File name", "Total carbohydrate area", "Total cell area", "% Carbohydrates", "Label"];
+        writetable(summary_table, output_file);
+        splitpath = split(listOfFileNames{i}, ".");
+        imgpath = strcat(splitpath(1), "_annotated.png");
+        %export_fig(gcf, imgpath);
+    else 
+        disp("Please set mode to either SEM or TEM.")
     end
-
-    theta = linspace(0,2*pi,200); 
-    x = center(1) + radius*cos(theta);
-    y = center(2) + radius*sin(theta);
-    bw = createMask(p);
-    mask = img;
-    mask(~bw) = 0;
-
-% % Automated Circle Finding -- does not work well :(
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% [centers, radii] = imfindcircles(img,[floor(100/pixelSize) floor(250/pixelSize)],'ObjectPolarity', ...
-%     'bright','Sensitivity',0.94,'Method','twostage','EdgeThreshold',0.1);
-% % [centersDark, radiiDark] = imfindcircles(img,[floor(100/pixelSize) floor(250/pixelSize)],'ObjectPolarity', ...
-% %     'bright','Sensitivity',0.94,'Method','twostage','EdgeThreshold',0.1);
-% % centers = [centers; centersDark];
-% % radii = [radii; radiiDark];
-% insideROI = inpolygon(centers(:,1), centers(:,2), x, y);
-% centers(~insideROI, :) = [];
-% radii(~insideROI, :) = [];
-% subplot(1, 2, 2);
-% imshow(mask);
-% h = viscircles(centers, radii);
-% 
-% export = array2table([repmat(listOfFileNames{i}, size(centers, 1), 1) centers(:, 1) centers(:, 2) radii .* pixelSize repmat(label, size(centers, 1), 1)]);
-% export.Properties.VariableNames = ["Filename", "Center (x)", "Center (y)", "Radius (nm)", "Condition"];
-% data_table = [data_table; export];
-
-m_export = array2table([string(listOfFileNames{i}) center(1) center(2) radius * pixelSize]);
-m_export.Properties.VariableNames = ["Filename", "Masked center (x)", "Masked center (y)", "Masked radius (nm)"];
-metadata = [metadata; m_export];
-
-% Circle Drawing (Aaron)
-centerX = [] ;
-centerY = [] ;
-radius = [] ;
-while true
-    try
-    roi = drawcircle();
-    cx = roi.Center(1) ;
-    cy = roi.Center(2) ;
-    centerX = [centerX; cx] ;
-    centerY = [centerY; cy] ;
-    r = roi.Radius ;
-    radius = [radius; r] ;
-    catch
-        break
-    end
-end
-
-% Table
-circle_data = table(centerX, centerY, radius .* pixelSize) ;
-circle_data.Properties.VariableNames = ["Center (x)", "Center (y)", "Radius (nm)"];
-Filename = repmat(listOfFileNames{i}, size(circle_data, 1), 1);
-Condition = repmat(label, size(circle_data, 1), 1);
-circle_data = addvars(circle_data, Filename, 'Before',"Center (x)");
-circle_data = addvars(circle_data, Condition, 'After',"Radius (nm)");
-data_table = [data_table; circle_data];
-writetable(data_table, output_file);
-splitpath = split(output_file,"/");
-splitpath(end) = strcat("metadata_", splitpath(end));
-metadata_path = join(splitpath,"/");
-writetable(metadata,metadata_path);
 end
