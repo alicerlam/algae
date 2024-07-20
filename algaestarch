@@ -1,29 +1,65 @@
-% I = imread("boop.png");
-imshow(I); 
+img = imread('CCMP362_High Nutrient_Rep1_001.TIF');
+figure();
+imshow(img);
+roi = [85 3350 350 100];
+ocrResults = ocr(img,roi, CharacterSet = ".1234567890");
+if (size(ocrResults.Words, 1) == 0) %% Scalebar to px (Aaron)
+    figure();
+    imgcropped = imcrop(img,[2680 3220 1000 175]) ;
+         subplot(1,2,1)
+         imshow(img)
+         subplot(1,2,2)
+         imshow(imgcropped)
+         % Length of scale
+         line = drawline ;
+         ep = line.Position;
+          x1 = ep(1,1); 
+          y1 = ep(1,2); 
+          x2 = ep(2,1); 
+          y2 = ep(2,2);
+        lineLength = sqrt((x2 - x1)^2 + (y2 - y1)^2);
+        
+        disp(lineLength)
+        
+        % Read measurement above scalebar
+        rectangleRoi = drawrectangle ;
+        pos = round(rectangleRoi.Position) ;
+        unit = ocr(imgcropped, pos, CharacterSet= ".1234567890" ) ;  
+        recognizedText = unit.Words ;
+        
+        % Calculate Pixel Size
+        unitofMeasure = recognizedText{1,1};
+        x =  str2double(unitofMeasure);
+        pixelSize = (x / lineLength * 1000);
+        close;
+    else
+        pixelSize = str2num(ocrResults.Words{1});
+    end
 disp("Press any key when you are finished drawing.")
 % Outline of Cell
 h = drawfreehand('Color','cyan', 'LineWidth', 10); % Makes a freehand shape object named "h"
-pos = h.Position; % Gets the position of h; you will likely want the area of h
+posofH = h.Position; % Gets the position of h; you will likely want the area of h
 set(gcf,'WindowKeyPressFcn', @(~,~) set(gcf,'UserData', true)); 
 waitfor(gcf,'UserData') % Waits for user to hit a key before finalizing the shape
 % Cell Area
 bwCell = createMask(h);
-area = bwarea(bwCell)
+area = bwarea(bwCell);
+AreaofCell = area * pixelSize;
 h.Visible = "off";
-cell_area = table(area);
-disp(cell_area)
+cell_area = table(AreaofCell);
+disp(cell_area);
 % Granule Area
-disp("Draw until all the starch granules have been outlined.. exit for table.")
-sugar_area = [];
+SugarArea = [];
 while true
     try
     sugarOutline = drawfreehand('Color','cyan', 'LineWidth', 5); % Makes a freehand shape object named "h"
     bwSugar = createMask(sugarOutline);
     starch_area = bwarea(bwSugar);
-    sugar_area = [sugar_area; starch_area];
+    starch_area = starch_area * pixelSize;
+    SugarArea = [SugarArea; starch_area];
     catch
          break
     end
 end
-sugar_table = table(sugar_area);
+sugar_table = table(SugarArea);
 disp(sugar_table)
