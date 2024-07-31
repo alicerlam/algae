@@ -6,6 +6,10 @@ data_table = table('Size',[0 5],'VariableTypes',{'string','double','double', 'do
 data_table.Properties.VariableNames = ["Filename", "Center (x)", "Center (y)", "Radius (nm)", "Condition"];
 metadata = table('Size',[0 4],'VariableTypes',{'string','double','double', 'double'});
 metadata.Properties.VariableNames = ["Filename", "Masked center (x)", "Masked center (y)", "Masked radius (nm)"];
+summary_table = table('Size',[0 6],'VariableTypes',{'string','double','double', 'double', 'string', 'double'});
+summary_table.Properties.VariableNames = ["File name", "Total carbohydrate area (nm^2)", "Total cell area (nm^2)", "% Carbohydrates", "Label", "Pixel Size (nm)"];
+sugar_table = table('Size',[0 3],'VariableTypes',{'string', 'double', 'string'});
+sugar_table.Properties.VariableNames = ["File name", "Carbohydrate Area (nm^2)", "Label"];
 output_file = input("Please enter a path to save to.");
 mode = "TEM"; % Replace "SEM" with "TEM" if analyzing TEM images.
 %%
@@ -31,11 +35,19 @@ for i = 1:length(listOfFileNames)
          subplot(1,2,2)
          imshow(imgcropped)
 
-         auto = input("Press 1 to read pixel size, 2 to read a scalebar");
+         auto = input("Press 0 to manually input pixel size, 1 to read pixel size, 2 to read a scalebar");
 
-         if (auto == 1)
-             ocrResults = ocr(img,rectangle.Position, CharacterSet= "1234567890");
+         if (auto == 0)
+             pixelSize = input("Please enter the pixel size.");
+         elseif (auto == 1)
+             ocrResults = ocr(img,rectangle.Position);
+             if (max(size(ocrResults.Words)) ~= 1)
+                pixelSize = str2num(strcat(ocrResults.Words{1}, ocrResults.Words{2}));
+             end
              pixelSize = str2num(ocrResults.Words{1});
+             if (mode == "TEM")
+                 pixelSize = pixelSize * 1000;
+             end
          elseif (auto == 2)
              % Length of scale
              line = drawline ;
@@ -175,6 +187,7 @@ for i = 1:length(listOfFileNames)
         h.Visible = "on";
         % Granule Area
         SugarArea = [];
+        splitimg = split(listOfFileNames{i}, ".");
         while true
             try
             sugarOutline = drawfreehand('Color','green', 'LineWidth', 5); % Makes a freehand shape object named "h"
@@ -182,23 +195,29 @@ for i = 1:length(listOfFileNames)
             starch_area = bwarea(bwSugar);
             starch_area = starch_area * pixelSize;
             SugarArea = [SugarArea; starch_area];
+            savefig(gcf, strcat(splitimg(1), ".fig"));
             catch
                  break
             end
         end
         Filename = repmat(listOfFileNames{i}, size(SugarArea, 1), 1);
         Condition = repmat(label, size(SugarArea, 1), 1);
-        sugar_table = table(Filename, SugarArea, Condition);
+        sugar_data = table(Filename, SugarArea, Condition);
+        sugar_data.Properties.VariableNames = ["File name", "Carbohydrate Area (nm^2)", "Label"];
+        sugar_table = [sugar_table; sugar_data];
         splitpath = split(output_file,"/");
-        splitpath(end) = strcat("raw_sugars", splitpath(end));
+        splitpath(end) = strcat("raw_sugars_", splitpath(end));
         sugars_path = join(splitpath,"/");
         writetable(sugar_table,sugars_path);
-        summary_table = table(convertCharsToStrings(listOfFileNames{i}), sum(SugarArea), cell_area, (sum(SugarArea)/cell_area) * 100, label);
-        summary_table.Properties.VariableNames = ["File name", "Total carbohydrate area", "Total cell area", "% Carbohydrates", "Label"];
+        summary_data = table(convertCharsToStrings(listOfFileNames{i}), sum(SugarArea), cell_area, (sum(SugarArea)/cell_area) * 100, label, pixelSize);
+        summary_data.Properties.VariableNames = ["File name", "Total carbohydrate area (nm^2)", "Total cell area (nm^2)", "% Carbohydrates", "Label", "Pixel Size (nm)"];
+        summary_table = [summary_table; summary_data];
         writetable(summary_table, output_file);
-        splitpath = split(listOfFileNames{i}, ".");
-        imgpath = strcat(splitpath(1), "_annotated.png");
-        %export_fig(gcf, imgpath);
+        imgpath = strcat(splitimg(1), "_annotated.png");
+        openfig(strcat(splitimg(1), ".fig"))
+        export_fig(gcf, imgpath);
+        delete(strcat(splitimg(1), ".fig"));
+        close all;
     else 
         disp("Please set mode to either SEM or TEM.")
     end
